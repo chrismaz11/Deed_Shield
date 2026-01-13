@@ -1,5 +1,7 @@
 const fs = require('fs');
 
+const { loadEnvLocal, getIssuerDid, getIssuerPrivateJwk } = require('../src/lib/env');
+const { getDb } = require('../src/lib/db');
 const { issueVcJwt } = require('../src/lib/vc-jwt');
 
 function parseCsvLine(line) {
@@ -7,7 +9,7 @@ function parseCsvLine(line) {
   return line.split(',').map((s) => s.trim());
 }
 
-function main() {
+async function main() {
   const file = process.argv[2];
   if (!file) {
     // eslint-disable-next-line no-console
@@ -15,8 +17,9 @@ function main() {
     process.exit(2);
   }
 
-  const secret = process.env.ATTESTATION_SECRET || 'dev-secret';
-  const issuer = process.env.ATTESTATION_ISSUER || 'did:example:issuer';
+  loadEnvLocal();
+  const issuer = getIssuerDid();
+  const privateJwk = getIssuerPrivateJwk();
 
   const text = fs.readFileSync(file, 'utf8');
   const lines = text.split(/\r?\n/).filter(Boolean);
@@ -38,6 +41,11 @@ function main() {
     }
   }
 
+  const { db } = getDb();
+  const insertCredential = db.prepare(
+    'INSERT OR REPLACE INTO credentials (jti, jwt, issued_at) VALUES (?, ?, ?)'
+  );
+
   for (let i = 1; i < lines.length; i++) {
     const row = parseCsvLine(lines[i]);
     const subject = {
@@ -47,10 +55,13 @@ function main() {
       docType: row[idx('docType')],
     };
 
-    const { jwt } = issueVcJwt({ issuer, subject, secret });
+    const { jwt, jti } = await issueVcJwt({ issuer, subject, privateJwk });
+    insertCredential.run(jti, jwt, new Date().toISOString());
     // eslint-disable-next-line no-console
     console.log(jwt);
   }
+
+  db.close();
 }
 
 if (require.main === module) {

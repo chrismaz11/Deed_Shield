@@ -1,2 +1,15 @@
-.DS_Store
-.CFUserTextEncoding
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/build
+**/.turbo
+**/coverage
+apps/api/prisma/dev.db
+apps/api/prisma/dev.db-journal
+.env
+
+# Keys and local env
+keys/
+keys/*.jwk.json
+.env.local

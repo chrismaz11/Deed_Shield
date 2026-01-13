@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "preserve",
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "noEmit": false,
+    "allowJs": true,
+    "incremental": true,
+    "module": "esnext",
+    "isolatedModules": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
+  },
+  "include": [
+    "next-env.d.ts",
+    "src/**/*",
+    ".next/types/**/*.ts"
+  ],
+  "references": [],
+  "exclude": [
+    "node_modules"
+  ]
+}

@@ -17,7 +17,7 @@ curl -i -sS -X POST http://localhost:3000/api/verify \
 Expected success shape:
 
 ```json
-{"verified":true}
+{"verified":true,"payload":{}}
 ```
 
 Revoke a JWT by jti:
@@ -31,5 +31,27 @@ curl -i -sS -X POST http://localhost:3000/api/revoke \
 Expected revoke success shape:
 
 ```json
-{"revoked":true}
+{"ok":true,"revoked":true,"jti":"PASTE_JTI_HERE"}
+```
+
+Revoke a JWT by jwt:
+
+```sh
+curl -i -sS -X POST http://localhost:3000/api/revoke \
+  -H 'content-type: application/json' \
+  -d '{"jwt":"PASTE_JWT_HERE"}'
+```
+
+Verify a revoked JWT (expect 409):
+
+```sh
+curl -i -sS -X POST http://localhost:3000/api/verify \
+  -H 'content-type: application/json' \
+  -d '{"jwt":"PASTE_JWT_HERE"}'
+```
+
+Expected revoked response:
+
+```json
+{"verified":false,"error":"Revoked"}
 ```
