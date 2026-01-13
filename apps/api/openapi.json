@@ -1,0 +1,159 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Deed Shield",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "summary": "Health check",
+        "responses": {
+          "200": { "description": "OK" }
+        }
+      }
+    },
+    "/api/v1/verify": {
+      "post": {
+        "summary": "Verify a notarized bundle",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VerifyInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification receipt summary",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VerifyResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/receipt/{receiptId}": {
+      "get": {
+        "summary": "Fetch receipt details",
+        "parameters": [
+          {
+            "name": "receiptId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Receipt details" }
+        }
+      }
+    },
+    "/api/v1/receipt/{receiptId}/pdf": {
+      "get": {
+        "summary": "Download receipt PDF",
+        "parameters": [
+          {
+            "name": "receiptId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "PDF" }
+        }
+      }
+    },
+    "/api/v1/anchor/{receiptId}": {
+      "post": {
+        "summary": "Anchor a receipt hash on-chain",
+        "parameters": [
+          {
+            "name": "receiptId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Anchor status" }
+        }
+      }
+    },
+    "/api/v1/receipts": {
+      "get": {
+        "summary": "List receipts",
+        "responses": {
+          "200": { "description": "Receipt list" }
+        }
+      }
+    },
+    "/api/v1/synthetic": {
+      "get": {
+        "summary": "Get a synthetic sample bundle",
+        "responses": {
+          "200": { "description": "Sample bundle" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "VerifyInput": {
+        "type": "object",
+        "properties": {
+          "bundleId": { "type": "string" },
+          "transactionType": { "type": "string" },
+          "ron": {
+            "type": "object",
+            "properties": {
+              "provider": { "type": "string" },
+              "notaryId": { "type": "string" },
+              "commissionState": { "type": "string" },
+              "sealPayload": { "type": "string" }
+            },
+            "required": ["provider", "notaryId", "commissionState", "sealPayload"]
+          },
+          "doc": {
+            "type": "object",
+            "properties": {
+              "docHash": { "type": "string" }
+            },
+            "required": ["docHash"]
+          },
+          "policy": {
+            "type": "object",
+            "properties": {
+              "profile": { "type": "string" }
+            },
+            "required": ["profile"]
+          }
+        },
+        "required": ["bundleId", "transactionType", "ron", "doc", "policy"]
+      },
+      "VerifyResponse": {
+        "type": "object",
+        "properties": {
+          "decision": { "type": "string" },
+          "reasons": { "type": "array", "items": { "type": "string" } },
+          "riskScore": { "type": "integer" },
+          "receiptId": { "type": "string" },
+          "receiptHash": { "type": "string" },
+          "anchor": {
+            "type": "object",
+            "properties": {
+              "status": { "type": "string" },
+              "txHash": { "type": "string" },
+              "chainId": { "type": "string" },
+              "anchorId": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
