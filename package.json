@@ -1,10 +1,38 @@
 {
-  "name": "record-event-attestation-mvp",
+  "name": "deed-shield",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "commonjs",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "ethers": "^6.13.4",
+    "pdf-parse": "^1.1.1"
+  },
   "scripts": {
+    "dev": "concurrently \"npm:dev --workspace apps/api\" \"npm:dev --workspace apps/web\"",
+    "build": "npm -ws run build",
+    "lint": "eslint .",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "demo": "tsx scripts/demo.ts",
     "start:verify": "node src/api/verify.js",
-    "ingest:csv": "node scripts/ingest-csv.js"
+    "init:db": "rm -f ${DB_PATH:-attestations.sqlite} && sqlite3 ${DB_PATH:-attestations.sqlite} < schema.sqlite.sql",
+    "gen:keys": "node scripts/gen-issuer-keys.js",
+    "seed:issuer": "node scripts/seed-issuer-public.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@typescript-eslint/eslint-plugin": "^7.6.0",
+    "@typescript-eslint/parser": "^7.6.0",
+    "concurrently": "^8.2.2",
+    "eslint": "^8.57.0",
+    "eslint-plugin-import": "^2.29.1",
+    "tsx": "^4.15.7",
+    "typescript": "5.5.4",
+    "vitest": "^2.0.5"
   }
 }

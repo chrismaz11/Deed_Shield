@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+blocked_paths=(
+  "Pictures/"
+  "Music/"
+  "Movies/"
+  "Library/"
+  "Documents/"
+  "Desktop/"
+  ".ssh/"
+  ".gnupg/"
+  "Google Drive/"
+)
+
+blocked_globs=(
+  "*.pem"
+  "*.key"
+  "credentials*.json"
+  "*token*"
+  "*.env"
+)
+
+failed=0
+
+while IFS= read -r -d '' file; do
+  for path in "${blocked_paths[@]}"; do
+    case "$file" in
+      "$path"*)
+        echo "Blocked path staged: $file" >&2
+        failed=1
+        ;;
+    esac
+  done
+
+  for glob in "${blocked_globs[@]}"; do
+    case "$file" in
+      $glob)
+        echo "Blocked file staged: $file" >&2
+        failed=1
+        ;;
+    esac
+  done
+done < <(git diff --cached --name-only -z)
+
+if [[ "$failed" -ne 0 ]]; then
+  echo "Commit blocked by repository safety rules." >&2
+  exit 1
+fi

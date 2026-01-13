@@ -1,0 +1,25 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Receipt {
+  id               String   @id @default(uuid())
+  receiptHash      String
+  inputsCommitment String
+  policyProfile    String
+  decision         String
+  reasons          String
+  riskScore        Int
+  checks           String
+  rawInputs        String
+  createdAt        DateTime @default(now())
+  anchorStatus     String   @default("PENDING")
+  anchorTxHash     String?
+  anchorChainId    String?
+  anchorId         String?
+}
