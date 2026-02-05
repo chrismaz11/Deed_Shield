@@ -99,3 +99,8 @@ Allows lifecycle management of issued receipts.
 ### 4. Anchor Portability
 Designed for multi-chain anchoring.
 - **Stub**: `PortableAnchorManager` in core prepares for swapping anchor providers without invalidating historical proofs.
+
+## Documentation
+
+Full user documentation is available in the [User Manual](./USER_MANUAL.md).
+
