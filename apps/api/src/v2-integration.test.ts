@@ -124,3 +124,87 @@ describe('V2 Feature Integration', () => {
         expect(listRes401.statusCode).toBe(401);
     });
 });
+
+describe('Tenant Isolation & Metering', () => {
+    let app: FastifyInstance;
+    let orgAReceiptId: string;
+
+    beforeAll(async () => {
+        app = await buildServer();
+
+        // Create two distinct organizations
+        await prisma.organization.upsert({
+            where: { apiKey: 'org-a-key' },
+            create: { name: 'Org A', adminEmail: 'a@test.com', apiKey: 'org-a-key' },
+            update: {}
+        });
+        await prisma.organization.upsert({
+            where: { apiKey: 'org-b-key' },
+            create: { name: 'Org B', adminEmail: 'b@test.com', apiKey: 'org-b-key' },
+            update: {}
+        });
+
+        // Create a receipt under Org A via /verify
+        const syntheticRes = await app.inject({ method: 'GET', url: '/api/v1/synthetic' });
+        const bundle = syntheticRes.json();
+        const pdfBuffer = Buffer.from('%PDF-1.4\nCALIFORNIA ALL-PURPOSE ACKNOWLEDGMENT\npenalty of perjury');
+        bundle.doc.pdfBase64 = pdfBuffer.toString('base64');
+        bundle.doc.docHash = '0x72be470fc03f8c093d6bc61cc91b428db88396b65030dd7d9305a3f297152f7c';
+
+        const verifyRes = await app.inject({
+            method: 'POST',
+            url: '/api/v1/verify',
+            headers: { 'x-api-key': 'org-a-key' },
+            payload: bundle
+        });
+        expect(verifyRes.statusCode).toBe(200);
+        orgAReceiptId = verifyRes.json().receiptId;
+    });
+
+    it('Org B GET /receipts returns empty (no cross-tenant leak)', async () => {
+        const res = await app.inject({
+            method: 'GET',
+            url: '/api/v1/receipts',
+            headers: { 'x-api-key': 'org-b-key' }
+        });
+        expect(res.statusCode).toBe(200);
+        const body = res.json();
+        expect(body.data).toHaveLength(0);
+    });
+
+    it('Org B GET /receipt/:id returns 403 for Org A receipt', async () => {
+        const res = await app.inject({
+            method: 'GET',
+            url: `/api/v1/receipt/${orgAReceiptId}`,
+            headers: { 'x-api-key': 'org-b-key' }
+        });
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error).toContain('Forbidden');
+    });
+
+    it('Org B GET /receipt/:id/pdf returns 403 for Org A receipt', async () => {
+        const res = await app.inject({
+            method: 'GET',
+            url: `/api/v1/receipt/${orgAReceiptId}/pdf`,
+            headers: { 'x-api-key': 'org-b-key' }
+        });
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error).toContain('Forbidden');
+    });
+
+    it('RequestLog entries have organizationId populated', async () => {
+        const orgA = await prisma.organization.findUnique({ where: { apiKey: 'org-a-key' } });
+        expect(orgA).toBeTruthy();
+
+        const logs = await prisma.requestLog.findMany({
+            where: { organizationId: orgA!.id },
+            orderBy: { timestamp: 'desc' },
+            take: 5
+        });
+
+        expect(logs.length).toBeGreaterThan(0);
+        for (const log of logs) {
+            expect(log.organizationId).toBe(orgA!.id);
+        }
+    });
+});
