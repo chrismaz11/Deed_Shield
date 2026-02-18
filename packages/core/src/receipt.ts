@@ -60,6 +60,7 @@ export async function signReceipt(
   })
     .setProtectedHeader({ alg: 'ES256', typ: 'JWT' })
     .setIssuedAt()
+    .setExpirationTime('30d')
     .setIssuer(issuerDid)
     .setSubject(receipt.receiptId)
     .sign(privateKey);
