@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto';
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import { keccak256, toUtf8Bytes, JsonRpcProvider, Contract } from 'ethers';
 import { z } from 'zod';
 import { PrismaClient } from '@prisma/client';
@@ -17,9 +19,6 @@ import {
   deriveNotaryWallet,
   signDocHash,
   verifyBundle,
-  MockCountyVerifier,
-  MockStateNotaryVerifier,
-  MockPropertyVerifier,
   RiskEngine,
   generateComplianceProof,
   DocumentRisk,
@@ -41,38 +40,71 @@ import { CookCountyComplianceValidator } from './services/compliance.js';
 
 const prisma = new PrismaClient();
 
-const bundleSchema = z.object({
-  bundleId: z.string().min(1),
-  transactionType: z.string().min(1),
-  ron: z.object({
-    provider: z.string().min(1),
-    notaryId: z.string().min(1),
-    commissionState: z.string().min(2).max(2),
-    sealPayload: z.string().min(1),
-    sealScheme: z.literal('SIM-ECDSA-v1').optional()
-  }),
-  doc: z.object({
-    docHash: z.string().min(1),
-    pdfBase64: z.string().optional()
-  }),
-  policy: z.object({
-    profile: z.string().min(1)
-  }),
-  property: z.object({
-    parcelId: z.string().min(1),
-    county: z.string().min(1),
-    state: z.string().length(2)
-  }),
-  ocrData: z.object({
-    notaryName: z.string().optional(),
-    notaryCommissionId: z.string().optional(),
-    propertyAddress: z.string().optional(),
-    grantorName: z.string().optional()
-  }).optional(),
-  timestamp: z.string().datetime().optional()
-});
 
-const verifyInputSchema = bundleSchema;
+const verifyRouteSchema = {
+  body: {
+    type: 'object',
+    required: ['bundleId', 'transactionType', 'ron', 'doc', 'policy', 'property'],
+    additionalProperties: false,
+    properties: {
+      bundleId: { type: 'string', minLength: 1 },
+      transactionType: { type: 'string', minLength: 1 },
+      ron: {
+        type: 'object',
+        required: ['provider', 'notaryId', 'commissionState', 'sealPayload'],
+        additionalProperties: false,
+        properties: {
+          provider: { type: 'string', minLength: 1 },
+          notaryId: { type: 'string', minLength: 1 },
+          commissionState: { type: 'string', minLength: 2, maxLength: 2 },
+          sealPayload: { type: 'string', minLength: 1 },
+          sealScheme: { type: 'string', enum: ['SIM-ECDSA-v1'] }
+        }
+      },
+      doc: {
+        type: 'object',
+        required: ['docHash'],
+        additionalProperties: false,
+        properties: {
+          docHash: { type: 'string', minLength: 1 },
+          pdfBase64: { type: 'string', minLength: 1 }
+        }
+      },
+      policy: {
+        type: 'object',
+        required: ['profile'],
+        additionalProperties: false,
+        properties: {
+          profile: { type: 'string', minLength: 1 }
+        }
+      },
+      property: {
+        type: 'object',
+        required: ['parcelId', 'county', 'state'],
+        additionalProperties: false,
+        properties: {
+          parcelId: { type: 'string', pattern: '^[A-Za-z0-9\\-]+$' },
+          county: { type: 'string', minLength: 1 },
+          state: { type: 'string', minLength: 2, maxLength: 2 }
+        }
+      },
+      ocrData: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          notaryName: { type: 'string' },
+          notaryCommissionId: { type: 'string' },
+          propertyAddress: { type: 'string' },
+          grantorName: { type: 'string' }
+        }
+      },
+      timestamp: { type: 'string', format: 'date-time' }
+    }
+  }
+};
+
+
+
 
 const deedParsedSchema = z.object({
   jurisdiction: z.object({
@@ -299,10 +331,23 @@ class BlockchainVerifier {
   }
 }
 
-export async function buildServer() {
+export async function buildServer(config?: {
+  attomApiKey?: string;
+  attomBaseUrl?: string;
+  rpcUrl?: string;
+  registryAddress?: string;
+  openaiApiKey?: string;
+  rateLimitMax?: number;
+  rateLimitWindow?: string;
+}) {
   const app = Fastify({ logger: true });
   await app.register(cors, {
     origin: true
+  });
+  await app.register(helmet);
+  await app.register(rateLimit, {
+    max: config?.rateLimitMax || 100,
+    timeWindow: config?.rateLimitWindow || '1 minute'
   });
   await ensureDatabase(prisma);
 
@@ -319,27 +364,26 @@ export async function buildServer() {
     }
 
     const client = new HttpAttomClient({
-      apiKey: process.env.ATTOM_API_KEY || '',
-      baseUrl: process.env.ATTOM_BASE_URL || 'https://api.gateway.attomdata.com'
+      apiKey: config?.attomApiKey || process.env.ATTOM_API_KEY || '',
+      baseUrl: config?.attomBaseUrl || process.env.ATTOM_BASE_URL || 'https://api.gateway.attomdata.com'
     });
 
     const report = await attomCrossCheck(deed, client);
     return reply.send(report);
   });
 
-  app.post('/api/v1/verify', async (request, reply) => {
-    const parsed = verifyInputSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Invalid payload', details: parsed.error.flatten() });
-    }
-
-    const input = parsed.data as BundleInput;
+  app.post('/api/v1/verify', {
+    schema: verifyRouteSchema,
+    bodyLimit: 5242880 // 5MB limit
+  }, async (request, reply) => {
+    // Fastify has already validated the body against the schema
+    const input = request.body as BundleInput;
     const registry = await loadRegistry();
     const verifiers = {
       county: new DatabaseCountyVerifier(),
       notary: new DatabaseNotaryVerifier(), // Note: If switching to RealNotaryVerifier, inject key here
-      property: new AttomPropertyVerifier(process.env.ATTOM_API_KEY || ''),
-      blockchain: new BlockchainVerifier(process.env.RPC_URL || '', process.env.REGISTRY_ADDRESS || '')
+      property: new AttomPropertyVerifier(config?.attomApiKey || process.env.ATTOM_API_KEY || ''),
+      blockchain: new BlockchainVerifier(config?.rpcUrl || process.env.RPC_URL || '', config?.registryAddress || process.env.REGISTRY_ADDRESS || '')
     };
     
     // Authenticate Organization (MANDATORY)
@@ -385,7 +429,7 @@ export async function buildServer() {
       const pdfBuffer = Buffer.from(input.doc.pdfBase64, 'base64');
       // Inject OpenAI Key via config
       const complianceValidator = new CookCountyComplianceValidator({ 
-        openaiApiKey: process.env.OPENAI_API_KEY 
+        openaiApiKey: config?.openaiApiKey || process.env.OPENAI_API_KEY 
       });
       const complianceResult = await complianceValidator.validateDocument(pdfBuffer);
 
@@ -696,7 +740,16 @@ export async function buildServer() {
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   const port = Number(process.env.PORT || 3001);
-  buildServer()
+  const config = {
+    attomApiKey: process.env.ATTOM_API_KEY || '',
+    attomBaseUrl: process.env.ATTOM_BASE_URL || 'https://api.gateway.attomdata.com',
+    rpcUrl: process.env.RPC_URL || '',
+    registryAddress: process.env.REGISTRY_ADDRESS || '',
+    openaiApiKey: process.env.OPENAI_API_KEY,
+    rateLimitMax: Number(process.env.RATE_LIMIT_MAX || 100),
+    rateLimitWindow: process.env.RATE_LIMIT_WINDOW || '1 minute'
+  };
+  buildServer(config)
     .then((app) => app.listen({ port, host: '0.0.0.0' }))
     .catch((error) => {
       console.error(error);

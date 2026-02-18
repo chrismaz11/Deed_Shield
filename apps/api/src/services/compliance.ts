@@ -295,7 +295,9 @@ export class CookCountyComplianceValidator {
                     { role: 'system', content: COOK_COUNTY_SYSTEM_PROMPT },
                     { role: 'user', content: `Analyze the following document text for compliance:\n\n${textCcontent.substring(0, 15000)}` }, // Truncate if too long, though gpt-4-turbo has large context
                 ],
-                temperature: 0, // Strict, deterministic
+                temperature: 0,
+            }, {
+                timeout: 15000 // 15s timeout
             });
 
             const analysis = completion.choices[0]?.message?.content || '';
@@ -303,10 +305,11 @@ export class CookCountyComplianceValidator {
 
         } catch (err) {
             console.error('[CookCountyComplianceValidator] LLM Analysis failed:', err);
+            // Fallback: FLAG for manual review instead of BLOCKing the pipeline
             return {
-                status: 'FAIL',
+                status: 'FLAGGED',
                 checks: this.getEmptyChecks(),
-                details: [`LLM Analysis Error: ${err instanceof Error ? err.message : 'Unknown error'}`],
+                details: [`Compliance Service Unavailable (Fallback): ${err instanceof Error ? err.message : 'Unknown error'}`],
             };
         }
     }

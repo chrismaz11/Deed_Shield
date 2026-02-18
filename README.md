@@ -92,20 +92,20 @@ OpenAPI spec: `apps/api/openapi.json`.
 
 Deed Shield v2 introduces advanced risk detection and privacy-preserving proofs.
 
-### 1. Document Fraud Risk Engine
+### 1. Document Fraud Risk Engine (Alpha)
 
-An AI-driven module that analyzes deed PDFs for anomalies before recording.
+A heuristic module that analyzes deed PDFs for structural anomalies.
 
 - **Forensics**: Dectects suspicious metadata/timestamps.
 - **Layout**: Validates structure against known templates.
-- **Result**: Generates a `fraudRisk` object in the verification receipt (Low/Medium/High risk bands).
+- **Result**: Generates a `fraudRisk` object in the verification receipt.
 
-### 2. Zero-Knowledge Compliance (ZKP)
+### 2. Compliance Attestation (ZKP Placeholder)
 
-Proves policy compliance without revealing private transaction details (Notary ID, County codes).
+Reserved for Zero-Knowledge Proofs of policy compliance. Currently generates a placeholder attestation structure for format compatibility.
 
-- **Output**: `zkpAttestation` embedded in receipts.
-- **Privacy**: Does not expose PII or internal rule logic.
+- **Status**: Non-functional stub (Roadmap item).
+- **Goal**: Prove compliance without revealing private transaction details.
 
 ### 3. Receipt Revocation
 
