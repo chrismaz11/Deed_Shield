@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "issuedAt": "2026-01-08T20:02:34.220Z",
+  "issuedAt": "2026-02-21T20:53:22.490Z",
   "issuer": "Synthetic Trust Registry",
   "signingKeyId": "registry-key-1",
   "ronProviders": [
@@ -22,8 +22,8 @@
       "commissionState": "CA",
       "status": "ACTIVE",
       "publicKey": "0x85CB027581405D082E933421f5C40d50c9c78265",
-      "validFrom": "2026-01-07T20:02:34.218Z",
-      "validTo": "2027-01-08T20:02:34.219Z"
+      "validFrom": "2026-02-20T20:53:22.487Z",
+      "validTo": "2027-02-21T20:53:22.487Z"
     },
     {
       "id": "NOTARY-2",
@@ -31,8 +31,8 @@
       "commissionState": "NY",
       "status": "ACTIVE",
       "publicKey": "0xB90D63EA364ad6088e10Aa3bee529FcFabD75f8B",
-      "validFrom": "2026-01-07T20:02:34.220Z",
-      "validTo": "2027-01-08T20:02:34.220Z"
+      "validFrom": "2026-02-20T20:53:22.489Z",
+      "validTo": "2027-02-21T20:53:22.489Z"
     },
     {
       "id": "NOTARY-3",
@@ -40,8 +40,8 @@
       "commissionState": "TX",
       "status": "ACTIVE",
       "publicKey": "0xaE23f093B7B2f5BeA63450af695A2500da50Bb03",
-      "validFrom": "2026-01-07T20:02:34.220Z",
-      "validTo": "2027-01-08T20:02:34.220Z"
+      "validFrom": "2026-02-20T20:53:22.490Z",
+      "validTo": "2027-02-21T20:53:22.490Z"
     }
   ]
 }
