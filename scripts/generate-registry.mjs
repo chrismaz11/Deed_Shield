@@ -34,13 +34,13 @@ const registry = {
   notaries
 };
 
-const { publicKey, privateKey } = await generateKeyPair('EdDSA');
+const { publicKey, privateKey } = await generateKeyPair('ES256');
 const publicJwk = await exportJWK(publicKey);
 const privateJwk = await exportJWK(privateKey);
 
 const canonical = canonicalize(registry);
 const signature = await new CompactSign(new TextEncoder().encode(canonical))
-  .setProtectedHeader({ alg: 'EdDSA', kid: registry.signingKeyId, typ: 'registry+jws' })
+  .setProtectedHeader({ alg: 'ES256', kid: registry.signingKeyId, typ: 'registry+jws' })
   .sign(privateKey);
 
 await writeFile(new URL('registry.json', registryDir), `${JSON.stringify(registry, null, 2)}\n`);

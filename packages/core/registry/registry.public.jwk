@@ -1,5 +1,6 @@
 {
-  "crv": "Ed25519",
-  "x": "0yrsApP8k0KjFfI01x26M6AZrV9DAq7ekncvCeNuZ1s",
-  "kty": "OKP"
+  "kty": "EC",
+  "x": "N_x89cwQ0k7fnxAkOYyvWwEBG7RE6IM7SSUr5F6RUIU",
+  "y": "UzE-A9N0jo4fkY6wEjz49lAMRcLiHX8TzhAoc5Q8JMg",
+  "crv": "P-256"
 }
