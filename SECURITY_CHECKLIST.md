@@ -74,6 +74,9 @@ echo $DATABASE_URL | grep -q 'sslmode=' && echo "TLS configured" || echo "WARNIN
 
 # 4. Check npm audit
 npm audit --production
+
+# 5. Capture DB security evidence bundle (staging/prod)
+DATABASE_URL="$DATABASE_URL" npm run evidence:db -- --environment staging --db-instance-id <rds-instance-id>
 ```
 
 ## 7. Items Requiring Out-of-Repo Action

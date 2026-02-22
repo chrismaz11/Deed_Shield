@@ -53,7 +53,7 @@ cp apps/api/.env.example apps/api/.env
 createdb deed_shield
 
 # Set DATABASE_URL in apps/api/.env
-# DATABASE_URL="postgresql://localhost:5432/deed_shield"
+# DATABASE_URL="postgresql://postgres:localdev@localhost:5432/deed_shield"
 
 # Run migrations
 cd apps/api

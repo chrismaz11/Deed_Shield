@@ -58,7 +58,7 @@ For the next integration phase, we will map internal Deed Shield JSON Bundle sch
 3.  **Database Migration**:
     ```bash
     cd apps/api
-    npx prisma db push
+    npx prisma migrate deploy
     ```
 4.  **Build Core**:
     ```bash
