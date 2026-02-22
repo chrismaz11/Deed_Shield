@@ -105,6 +105,40 @@ const verifyRouteSchema = {
   }
 };
 
+const emptyObjectSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {}
+} as const;
+
+const receiptIdParamsSchema = {
+  type: 'object',
+  required: ['receiptId'],
+  additionalProperties: false,
+  properties: {
+    receiptId: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 128,
+      pattern: '^[A-Za-z0-9._:-]+$'
+    }
+  }
+} as const;
+
+const noBodySchema = z.union([z.undefined(), z.null(), z.object({}).strict()]);
+
+function rejectUnexpectedBody(requestBody: unknown, reply: { code: (statusCode: number) => { send: (payload: unknown) => unknown } }) {
+  const parsed = noBodySchema.safeParse(requestBody);
+  if (!parsed.success) {
+    reply.code(400).send({
+      error: 'Invalid payload',
+      details: 'This endpoint does not accept a request body.'
+    });
+    return true;
+  }
+  return false;
+}
+
 
 
 
@@ -378,9 +412,18 @@ export async function buildServer(config?: {
   });
   await ensureDatabase(prisma);
 
-  app.get('/api/v1/health', async () => ({ status: 'ok' }));
+  app.get('/api/v1/health', {
+    schema: {
+      querystring: emptyObjectSchema
+    }
+  }, async () => ({ status: 'ok' }));
 
-  app.post('/api/v1/verify/attom', async (request, reply) => {
+  app.post('/api/v1/verify/attom', {
+    schema: {
+      querystring: emptyObjectSchema
+    },
+    bodyLimit: 5242880 // 5MB limit
+  }, async (request, reply) => {
     const organization = await requireOrg(request, reply, prisma);
     if (!organization) return;
 
@@ -412,7 +455,10 @@ export async function buildServer(config?: {
   });
 
   app.post('/api/v1/verify', {
-    schema: verifyRouteSchema,
+    schema: {
+      ...verifyRouteSchema,
+      querystring: emptyObjectSchema
+    },
     bodyLimit: 5242880 // 5MB limit
   }, async (request, reply) => {
     // Fastify has already validated the body against the schema
@@ -565,7 +611,11 @@ export async function buildServer(config?: {
     return reply.send(body);
   });
 
-  app.get('/api/v1/synthetic', async () => {
+  app.get('/api/v1/synthetic', {
+    schema: {
+      querystring: emptyObjectSchema
+    }
+  }, async () => {
     const registry = await loadRegistry();
     const notary = registry.notaries[0];
     if (!notary) {
@@ -599,7 +649,11 @@ export async function buildServer(config?: {
   // ----------------------------------------------------------------
   // GET /api/v1/receipts - PROTECTED & SCOPED
   // ----------------------------------------------------------------
-  app.get('/api/v1/receipts', async (request, reply) => {
+  app.get('/api/v1/receipts', {
+    schema: {
+      querystring: emptyObjectSchema
+    }
+  }, async (request, reply) => {
     const organization = await requireOrg(request, reply, prisma);
     if (!organization) return; // Response sent by helper
 
@@ -627,7 +681,12 @@ export async function buildServer(config?: {
   // ----------------------------------------------------------------
   // GET /api/v1/receipt/:receiptId - PROTECTED & OWNED
   // ----------------------------------------------------------------
-  app.get('/api/v1/receipt/:receiptId', async (request, reply) => {
+  app.get('/api/v1/receipt/:receiptId', {
+    schema: {
+      params: receiptIdParamsSchema,
+      querystring: emptyObjectSchema
+    }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
     
     const organization = await requireOrg(request, reply, prisma);
@@ -692,7 +751,12 @@ export async function buildServer(config?: {
   // ----------------------------------------------------------------
   // GET /api/v1/receipt/:receiptId/pdf - PROTECTED & OWNED
   // ----------------------------------------------------------------
-  app.get('/api/v1/receipt/:receiptId/pdf', async (request, reply) => {
+  app.get('/api/v1/receipt/:receiptId/pdf', {
+    schema: {
+      params: receiptIdParamsSchema,
+      querystring: emptyObjectSchema
+    }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
     
     const organization = await requireOrg(request, reply, prisma);
@@ -717,11 +781,17 @@ export async function buildServer(config?: {
     return reply.send(buffer);
   });
 
-  app.post('/api/v1/receipt/:receiptId/verify', async (request, reply) => {
+  app.post('/api/v1/receipt/:receiptId/verify', {
+    schema: {
+      params: receiptIdParamsSchema,
+      querystring: emptyObjectSchema
+    }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
     
     const organization = await requireOrg(request, reply, prisma);
     if (!organization) return;
+    if (rejectUnexpectedBody(request.body, reply)) return;
 
     const record = await prisma.receipt.findUnique({ where: { id: receiptId } });
     if (!record) {
@@ -769,10 +839,16 @@ export async function buildServer(config?: {
     });
   });
 
-  app.post('/api/v1/anchor/:receiptId', async (request, reply) => {
+  app.post('/api/v1/anchor/:receiptId', {
+    schema: {
+      params: receiptIdParamsSchema,
+      querystring: emptyObjectSchema
+    }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
     const organization = await requireOrg(request, reply, prisma);
     if (!organization) return;
+    if (rejectUnexpectedBody(request.body, reply)) return;
 
     const record = await prisma.receipt.findUnique({ where: { id: receiptId } });
     if (!record) {
@@ -831,10 +907,16 @@ export async function buildServer(config?: {
     });
   });
 
-  app.post('/api/v1/receipt/:receiptId/revoke', async (request, reply) => {
+  app.post('/api/v1/receipt/:receiptId/revoke', {
+    schema: {
+      params: receiptIdParamsSchema,
+      querystring: emptyObjectSchema
+    }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
     const organization = await requireOrg(request, reply, prisma);
     if (!organization) return;
+    if (rejectUnexpectedBody(request.body, reply)) return;
 
     const record = await prisma.receipt.findUnique({ where: { id: receiptId } });
     if (!record) {
