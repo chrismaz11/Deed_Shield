@@ -16,7 +16,7 @@ Scope: Repository-wide (`deedshield-app-clean`) with implementation focus in `De
 - Reason:
   - Secrets are present in tracked files (`.env.local`, `packages/core/registry/registry.private.jwk`).
   - PostgreSQL migration is complete in test, but staging/prod evidence for encrypted PostgreSQL + TLS connection policy is still missing (AWS session currently fails with `InvalidClientTokenId`).
-  - TLS 1.3/HTTPS enforcement is not complete at app boundary (runtime docs rely on external LB policy).
+  - TLS 1.3/HTTPS enforcement is implemented in code, but staging/prod ingress evidence is still missing (`x-forwarded-proto=https` forwarding + certificate policy proof).
   - Monitoring/alerts/status-page controls are not implemented.
 
 ## Critical Week 1 Roadmap
@@ -26,13 +26,13 @@ Scope: Repository-wide (`deedshield-app-clean`) with implementation focus in `De
 | JSON/Zod validation on all API endpoints | `VERIFIED IN TEST` | Route schema hardening in `Deed_Shield/apps/api/src/server.ts`; validation tests in `Deed_Shield/apps/api/src/request-validation.test.ts` | Staging verification + OpenAPI parity still pending in Workstream #9 |
 | Per-API-key rate limiting | `VERIFIED IN TEST` | `Deed_Shield/apps/api/src/server.ts`, `Deed_Shield/apps/api/test/rate-limit.test.ts` | Needs staging verification under load |
 | PostgreSQL + TLS DB path | `VERIFIED IN TEST` | Datasource set to `postgresql` in `Deed_Shield/apps/api/prisma/schema.prisma`; baseline migration in `Deed_Shield/apps/api/prisma/migrations/20260222141500_postgresql_baseline/migration.sql`; `prisma migrate deploy` + API tests pass against local PostgreSQL; evidence automation added in `Deed_Shield/scripts/capture-db-security-evidence.mjs` and runbook `Deed_Shield/docs/ops/db-security-evidence.md` | Need staging/prod attestation for encrypted storage + TLS enforcement at DB layer |
-| TLS certificates / HTTPS in production | `IN PROGRESS` | Docs mention TLS requirements (`Deed_Shield/docs/IT_INSTALLATION_MANUAL.md`) | No code-level enforcement of HTTPS-only edge path in service runtime |
+| TLS certificates / HTTPS in production | `VERIFIED IN TEST` | HTTPS runtime guard in `Deed_Shield/apps/api/src/server.ts`; test coverage in `Deed_Shield/apps/api/src/https-enforcement.test.ts` | Need staging/prod ingress attestations (TLS cert chain, TLS1.3 policy, `x-forwarded-proto` forwarding) |
 
 ## 13 Workstream Checklist
 | # | Workstream | Status | Evidence | Remaining Gate |
 |---|---|---|---|---|
 | 1 | Rate limiting per `Organization.apiKey` + 429 logging | `VERIFIED IN TEST` | `Deed_Shield/apps/api/src/server.ts`, `Deed_Shield/apps/api/test/rate-limit.test.ts` | Staging soak + abuse test |
-| 2 | HTTPS/TLS 1.3 everywhere | `IN PROGRESS` | TLS guidance in `Deed_Shield/docs/IT_INSTALLATION_MANUAL.md` | Enforce edge config + prove no HTTP prod path |
+| 2 | HTTPS/TLS 1.3 everywhere | `IN PROGRESS` | Runtime HTTPS rejection in `Deed_Shield/apps/api/src/server.ts`; tests in `Deed_Shield/apps/api/src/https-enforcement.test.ts`; TLS guidance in `Deed_Shield/docs/IT_INSTALLATION_MANUAL.md` | Need staging/prod evidence for edge TLS1.3 policy + cert lifecycle + forwarded proto configuration |
 | 3 | PostgreSQL + encryption-at-rest + TLS DB | `IN PROGRESS` | Production DB guard in `Deed_Shield/apps/api/src/server.ts`; datasource/migration path is PostgreSQL (`Deed_Shield/apps/api/prisma/schema.prisma`, `Deed_Shield/apps/api/prisma/migrations/20260222141500_postgresql_baseline/migration.sql`); evidence bundle generator in `Deed_Shield/scripts/capture-db-security-evidence.mjs`; local dry-run artifact at `Deed_Shield/docs/evidence/db-security/staging-local-20260222T150912Z.md` | Need staging evidence of encrypted-at-rest PostgreSQL and `sslmode=require` (or stronger) in deployed DB connection, plus valid cloud credentials for RDS metadata pull |
 | 4 | Vault-backed secret management + rotation | `IN PROGRESS` | AWS Secrets Manager helper in `Deed_Shield/apps/api/src/config/secrets.ts` | Not full secret inventory, no rotation automation evidence |
 | 5 | Trust registry detached signature verification | `VERIFIED IN TEST` | `Deed_Shield/apps/api/src/registryLoader.ts`, `Deed_Shield/apps/api/src/registryLoader.test.ts` | Staging key-rotation drill |
