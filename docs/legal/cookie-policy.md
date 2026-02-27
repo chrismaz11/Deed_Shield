@@ -1,37 +1,31 @@
-# Cookie & Tracking Policy
+# Cookie and Tracking Policy
 
-**Version:** 1.0
-**Date:** 2026-01-16
+**Version:** 2.0
+**Effective Date:** 2026-02-25
 
----
+## 1. Purpose
+This policy explains how TrustSignal and Deed Shield use cookies and similar technologies in web-facing service components.
 
-## 1. Scope
-This policy applies to the Deed Shield web portal and simulator environment (the "Service"). It explains how we use cookies and similar tracking technologies.
+## 2. Tracking Approach
+Our default model is first-party operational tracking for service delivery and reliability.
 
-## 2. Our Philosophy: B2B First-Party Only
-Deed Shield is a business-to-business (B2B) verification utility.
-- **No Third-Party Ad Trackers:** We do not sell your data or allow third-party advertising networks to track you across our Service.
-- **No Cross-Site Tracking:** We do not monitor your behavior on other websites.
+We do not use third-party advertising trackers for cross-site behavioral advertising within the pilot and core product experience.
 
-## 3. Cookies We Use
+## 3. Cookie Categories
+### 3.1 Strictly Necessary Cookies
+Required for secure session and platform operation, including:
+- session continuity
+- CSRF and related security protections
+- platform routing and load-balancing continuity
 
-### 3.1. Essential Cookies (Strictly Necessary)
-These are required for the Service to function. You cannot opt out of these.
-- **Session ID:** Maintains your login state (`sid`).
-- **CSRF Token:** Protects against Cross-Site Request Forgery attacks (`csrf_token`).
-- **Load Balancer:** Directs traffic to the correct server node.
+### 3.2 Operational and Performance Signals
+Used for reliability and support operations, including:
+- request volume and latency trends
+- error-rate and health monitoring
+- service diagnostics used for incident response
 
-### 3.2. Performance & Analytics (First-Party)
-We use internal analytics to understand system performance and usage patterns.
-- **Metric:** Usage volume (verifications per minute).
-- **Metric:** Error rates (API 500/400 responses).
-- **Storage:** These are stored in our own server logs and aggregated dashboards, not sent to Google Analytics or Meta Pixel.
+## 4. User Controls
+Browser settings may allow cookie restrictions. Restricting necessary cookies may prevent authentication and core verification flows from functioning.
 
-## 4. Managing Cookies
-Most browsers allow you to block cookies. However, blocking **Essential Cookies** will cause the Service (login, upload, verification) to fail.
-
-## 5. Updates
-We may update this policy if we introduce new features. Check the "Version" date at the top.
-
----
-*End of Cookie Policy v1.0*
+## 5. Policy Updates
+We may revise this policy as service functionality evolves. The version and effective date at the top indicate the current policy.

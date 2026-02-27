@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto';
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
+import { Counter, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 import { keccak256, toUtf8Bytes, JsonRpcProvider, Contract } from 'ethers';
 import { z } from 'zod';
 import { PrismaClient } from '@prisma/client';
@@ -17,16 +19,15 @@ import {
   deriveNotaryWallet,
   signDocHash,
   verifyBundle,
-  MockCountyVerifier,
-  MockStateNotaryVerifier,
-  MockPropertyVerifier,
   RiskEngine,
   generateComplianceProof,
   DocumentRisk,
   ZKPAttestation,
   NotaryVerifier,
   PropertyVerifier,
-  CountyVerifier
+  CountyVerifier,
+  nameOverlapScore,
+  normalizeName
 } from '@deed-shield/core';
 
 import { toV2VerifyResponse } from './lib/v2ReceiptMapper.js';
@@ -37,8 +38,16 @@ import { renderReceiptPdf } from './receiptPdf.js';
 import { attomCrossCheck, DeedParsed } from '@deed-shield/core';
 import { HttpAttomClient } from './services/attomClient.js';
 import { CookCountyComplianceValidator } from './services/compliance.js';
+import {
+  buildSecurityConfig,
+  getApiRateLimitKey,
+  isCorsOriginAllowed,
+  requireApiKeyScope,
+  verifyRevocationHeaders
+} from './security.js';
 
 const prisma = new PrismaClient();
+const REQUEST_START = Symbol('requestStartMs');
 
 const bundleSchema = z.object({
   bundleId: z.string().min(1),
@@ -106,6 +115,24 @@ const deedParsedSchema = z.object({
 
 type ReceiptRecord = NonNullable<Awaited<ReturnType<typeof prisma.receipt.findUnique>>>;
 type ReceiptListRecord = Awaited<ReturnType<typeof prisma.receipt.findMany>>[number];
+
+function normalizeForwardedProto(value: string | string[] | undefined): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return null;
+  const first = raw.split(',')[0]?.trim().toLowerCase();
+  return first || null;
+}
+
+function databaseUrlHasRequiredSslMode(databaseUrl: string | undefined): boolean {
+  if (!databaseUrl) return false;
+  try {
+    const parsed = new URL(databaseUrl);
+    const sslMode = parsed.searchParams.get('sslmode');
+    return sslMode?.toLowerCase() === 'require';
+  } catch {
+    return databaseUrl.toLowerCase().includes('sslmode=require');
+  }
+}
 
 function receiptFromDb(record: ReceiptRecord) {
   return {
@@ -185,15 +212,20 @@ class DatabasePropertyVerifier {
       });
 
       if (property) {
-        const inputGrantor = bundle.ocrData.grantorName.toLowerCase().trim();
-        const currentOwner = property.currentOwner.toLowerCase().trim();
+        const score = nameOverlapScore([bundle.ocrData.grantorName], [property.currentOwner]);
+        const normalizedGrantor = normalizeName(bundle.ocrData.grantorName);
+        const normalizedOwner = normalizeName(property.currentOwner);
 
-        // Fuzzy match: Check if names roughly match (e.g. "John Doe" vs "Doe, John" or inclusion)
-        if (!currentOwner.includes(inputGrantor) && !inputGrantor.includes(currentOwner)) {
+        if (score < 0.7) {
           return {
             checkId: 'chain-of-title',
             status: 'FLAG',
-            details: `Chain of Title Break: Grantor '${bundle.ocrData.grantorName}' does not match current owner '${property.currentOwner}'`
+            details: `Chain of Title Break: Grantor '${bundle.ocrData.grantorName}' does not match current owner '${property.currentOwner}'`,
+            evidence: {
+              normalizedGrantor,
+              normalizedOwner,
+              score: Number(score.toFixed(2))
+            } as unknown as Record<string, unknown>
           } as unknown as CheckResult;
         }
       }
@@ -247,10 +279,9 @@ class AttomPropertyVerifier implements PropertyVerifier {
       }
     }
 
-    const inputGrantor = grantorName.toLowerCase();
-    const recordOwner = ownerName.toLowerCase();
-    const match = !!recordOwner && (recordOwner.includes(inputGrantor) || inputGrantor.includes(recordOwner));
-    const score = match ? 90 : 0;
+    const overlapScore = nameOverlapScore([grantorName], [ownerName]);
+    const match = overlapScore >= 0.7;
+    const score = Math.round(overlapScore * 100);
 
     return { match, score, recordOwner: ownerName };
   }
@@ -300,14 +331,88 @@ class BlockchainVerifier {
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
+  const securityConfig = buildSecurityConfig();
+  const metricsRegistry = new Registry();
+  collectDefaultMetrics({ register: metricsRegistry, prefix: 'deedshield_api_' });
+  const httpRequestsTotal = new Counter({
+    name: 'deedshield_http_requests_total',
+    help: 'Total HTTP requests served by the API',
+    labelNames: ['method', 'route', 'status_code'] as const,
+    registers: [metricsRegistry]
+  });
+  const httpRequestDurationSeconds = new Histogram({
+    name: 'deedshield_http_request_duration_seconds',
+    help: 'HTTP request duration in seconds',
+    labelNames: ['method', 'route', 'status_code'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+    registers: [metricsRegistry]
+  });
+  const perApiKeyRateLimit = {
+    max: securityConfig.perApiKeyRateLimitMax,
+    timeWindow: securityConfig.rateLimitWindow,
+    keyGenerator: getApiRateLimitKey
+  };
+
+  app.addHook('onRequest', async (request) => {
+    (request as any)[REQUEST_START] = Date.now();
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const route = (request.routeOptions.url || request.url.split('?')[0] || 'unknown').toString();
+    const method = request.method;
+    const statusCode = String(reply.statusCode);
+    const startedAt = (request as any)[REQUEST_START] as number | undefined;
+    const durationSeconds = startedAt ? (Date.now() - startedAt) / 1000 : 0;
+    httpRequestsTotal.inc({ method, route, status_code: statusCode });
+    httpRequestDurationSeconds.observe({ method, route, status_code: statusCode }, durationSeconds);
+  });
+
   await app.register(cors, {
-    origin: true
+    origin: (origin, cb) => {
+      cb(null, isCorsOriginAllowed(securityConfig, origin));
+    }
+  });
+  await app.register(rateLimit, {
+    global: true,
+    max: securityConfig.globalRateLimitMax,
+    timeWindow: securityConfig.rateLimitWindow,
+    keyGenerator: (request) => request.ip,
+    errorResponseBuilder: (request, context) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded. Retry in ${context.after}`,
+      requestId: request.id
+    })
   });
   await ensureDatabase(prisma);
 
   app.get('/api/v1/health', async () => ({ status: 'ok' }));
+  app.get('/api/v1/status', async (request) => {
+    const forwardedProto = normalizeForwardedProto(request.headers['x-forwarded-proto']);
+    return {
+      status: 'ok',
+      service: 'deed-shield-api',
+      environment: process.env.NODE_ENV || 'development',
+      uptimeSeconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+      ingress: {
+        forwardedProto,
+        forwardedHttps: forwardedProto === 'https'
+      },
+      database: {
+        sslModeRequired: databaseUrlHasRequiredSslMode(process.env.DATABASE_URL)
+      }
+    };
+  });
+  app.get('/api/v1/metrics', async (_request, reply) => {
+    reply.header('Content-Type', metricsRegistry.contentType);
+    return reply.send(await metricsRegistry.metrics());
+  });
 
-  app.post('/api/v1/verify/attom', async (request, reply) => {
+  app.post('/api/v1/verify/attom', {
+    preHandler: [requireApiKeyScope(securityConfig, 'verify')],
+    config: { rateLimit: perApiKeyRateLimit }
+  }, async (request, reply) => {
     const parsed = deedParsedSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Invalid payload', details: parsed.error.flatten() });
@@ -326,7 +431,10 @@ export async function buildServer() {
     return reply.send(report);
   });
 
-  app.post('/api/v1/verify', async (request, reply) => {
+  app.post('/api/v1/verify', {
+    preHandler: [requireApiKeyScope(securityConfig, 'verify')],
+    config: { rateLimit: perApiKeyRateLimit }
+  }, async (request, reply) => {
     const parsed = verifyInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Invalid payload', details: parsed.error.flatten() });
@@ -423,7 +531,10 @@ export async function buildServer() {
     return reply.send(body);
   });
 
-  app.get('/api/v1/synthetic', async () => {
+  app.get('/api/v1/synthetic', {
+    preHandler: [requireApiKeyScope(securityConfig, 'read')],
+    config: { rateLimit: perApiKeyRateLimit }
+  }, async () => {
     const registry = await loadRegistry();
     const notary = registry.notaries[0];
     if (!notary) {
@@ -454,7 +565,10 @@ export async function buildServer() {
     return bundle;
   });
 
-  app.get('/api/v1/receipt/:receiptId', async (request, reply) => {
+  app.get('/api/v1/receipt/:receiptId', {
+    preHandler: [requireApiKeyScope(securityConfig, 'read')],
+    config: { rateLimit: perApiKeyRateLimit }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
     const record = await prisma.receipt.findUnique({ where: { id: receiptId } });
     if (!record) {
@@ -507,7 +621,10 @@ export async function buildServer() {
     });
   });
 
-  app.get('/api/v1/receipt/:receiptId/pdf', async (request, reply) => {
+  app.get('/api/v1/receipt/:receiptId/pdf', {
+    preHandler: [requireApiKeyScope(securityConfig, 'read')],
+    config: { rateLimit: perApiKeyRateLimit }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
     const record = await prisma.receipt.findUnique({ where: { id: receiptId } });
     if (!record) {
@@ -523,7 +640,10 @@ export async function buildServer() {
     return reply.send(buffer);
   });
 
-  app.post('/api/v1/receipt/:receiptId/verify', async (request, reply) => {
+  app.post('/api/v1/receipt/:receiptId/verify', {
+    preHandler: [requireApiKeyScope(securityConfig, 'read')],
+    config: { rateLimit: perApiKeyRateLimit }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
     const record = await prisma.receipt.findUnique({ where: { id: receiptId } });
     if (!record) {
@@ -563,7 +683,10 @@ export async function buildServer() {
     });
   });
 
-  app.post('/api/v1/anchor/:receiptId', async (request, reply) => {
+  app.post('/api/v1/anchor/:receiptId', {
+    preHandler: [requireApiKeyScope(securityConfig, 'anchor')],
+    config: { rateLimit: perApiKeyRateLimit }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
     const record = await prisma.receipt.findUnique({ where: { id: receiptId } });
     if (!record) {
@@ -598,8 +721,17 @@ export async function buildServer() {
     });
   });
 
-  app.post('/api/v1/receipt/:receiptId/revoke', async (request, reply) => {
+  app.post('/api/v1/receipt/:receiptId/revoke', {
+    preHandler: [requireApiKeyScope(securityConfig, 'revoke')],
+    config: { rateLimit: perApiKeyRateLimit }
+  }, async (request, reply) => {
     const { receiptId } = request.params as { receiptId: string };
+    const revocationVerification = verifyRevocationHeaders(request, receiptId, securityConfig);
+    if ('error' in revocationVerification) {
+      const statusCode = revocationVerification.error === 'issuer_not_allowed' ? 403 : 401;
+      return reply.code(statusCode).send({ error: revocationVerification.error });
+    }
+
     const record = await prisma.receipt.findUnique({ where: { id: receiptId } });
     if (!record) {
       return reply.code(404).send({ error: 'Receipt not found' });
@@ -614,10 +746,13 @@ export async function buildServer() {
       data: { revoked: true }
     });
 
-    return reply.send({ status: 'REVOKED' });
+    return reply.send({ status: 'REVOKED', issuerId: revocationVerification.issuerId });
   });
 
-  app.get('/api/v1/receipts', async () => {
+  app.get('/api/v1/receipts', {
+    preHandler: [requireApiKeyScope(securityConfig, 'read')],
+    config: { rateLimit: perApiKeyRateLimit }
+  }, async () => {
     const records: ReceiptListRecord[] = await prisma.receipt.findMany({
       orderBy: { createdAt: 'desc' },
       take: 100
@@ -635,7 +770,13 @@ export async function buildServer() {
   return app;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+const isDirectExecution = (() => {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return /[\\/]server\.(js|ts)$/.test(entry);
+})();
+
+if (isDirectExecution) {
   const port = Number(process.env.PORT || 3001);
   buildServer()
     .then((app) => app.listen({ port, host: '0.0.0.0' }))

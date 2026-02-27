@@ -1,37 +1,31 @@
 const http = require('http');
-const { execFileSync } = require('child_process');
 const { URL } = require('url');
 const { ethers } = require('ethers');
-const { loadEnvLocal, getDbPath, getAnchorConfig } = require('../lib/env');
+const { loadEnvLocal, getAnchorConfig } = require('../lib/env');
 const { handleReceipt } = require('./receipt');
 const { decodeJwtPayloadUnverified, verifyVcJwt } = require('../lib/vc-jwt');
+const { getDb } = require('../lib/db');
 
 loadEnvLocal();
-const DB_PATH = getDbPath();
+const { db } = getDb();
 const anchorConfig = getAnchorConfig();
 const anchorProvider = new ethers.JsonRpcProvider(anchorConfig.rpcUrl);
 let lastAnchorTxHash = null;
 
-function sqlSelectFirstValue(sql) {
-  const out = execFileSync('sqlite3', ['-batch', '-noheader', DB_PATH, sql], {
-    encoding: 'utf8',
-  });
-  return String(out || '').trim().split(/\r?\n/)[0] || '';
+function sqlSelectFirstValue(sql, params = []) {
+  const row = db.prepare(sql).get(...params);
+  if (!row) return '';
+  const first = Object.values(row)[0];
+  return first == null ? '' : String(first);
 }
 
-function sqlExists(sql) {
-  const out = execFileSync('sqlite3', ['-batch', '-noheader', DB_PATH, sql], {
-    encoding: 'utf8',
-  });
-  return String(out || '').trim() !== '';
+function sqlExists(sql, params = []) {
+  const row = db.prepare(sql).get(...params);
+  return !!row;
 }
 
-function sqlRun(sql) {
-  execFileSync('sqlite3', ['-batch', DB_PATH, sql], { stdio: 'ignore' });
-}
-
-function q(v) {
-  return `'${String(v).replace(/'/g, "''")}'`;
+function sqlRun(sql, params = []) {
+  db.prepare(sql).run(...params);
 }
 
 function readJson(req) {
@@ -86,7 +80,8 @@ async function verifyAndRespond(jwt, res, { includeSubject = false } = {}) {
   }
 
   const publicJwkJson = sqlSelectFirstValue(
-    `SELECT public_jwk_json FROM issuers WHERE did = ${q(iss)} LIMIT 1`
+    'SELECT public_jwk_json FROM issuers WHERE did = ? LIMIT 1',
+    [iss]
   );
   if (!publicJwkJson) {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -95,7 +90,8 @@ async function verifyAndRespond(jwt, res, { includeSubject = false } = {}) {
   }
 
   const revoked = sqlExists(
-    `SELECT 1 FROM revocations WHERE jti = ${q(jti)} LIMIT 1`
+    'SELECT 1 FROM revocations WHERE jti = ? LIMIT 1',
+    [jti]
   );
   if (revoked) {
     res.writeHead(409, { 'content-type': 'application/json' });
@@ -180,11 +176,10 @@ async function handleRevoke(req, res) {
       return;
     }
 
-    sqlRun(
-      `INSERT OR REPLACE INTO revocations (jti, revoked_at) VALUES (${q(
-        jti
-      )}, ${q(new Date().toISOString())})`
-    );
+    sqlRun('INSERT OR REPLACE INTO revocations (jti, revoked_at) VALUES (?, ?)', [
+      jti,
+      new Date().toISOString()
+    ]);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ revoked: true }));
   } catch {

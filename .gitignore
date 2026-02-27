@@ -8,8 +8,19 @@ node_modules
 apps/api/prisma/dev.db
 apps/api/prisma/dev.db-journal
 .env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+*.sqlite
+**/*.sqlite
 
 # Keys and local env
 keys/
 keys/*.jwk.json
 .env.local
+packages/core/registry/registry.private.jwk
+.aider*
+.vercel
+.env*.local

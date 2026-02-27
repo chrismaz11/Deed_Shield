@@ -1,0 +1,231 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { FastifyInstance } from 'fastify';
+import { Wallet } from 'ethers';
+
+import { buildServer } from './server.js';
+
+const apiKeyRead = 'test-read-key';
+const apiKeyRate = 'test-rate-key';
+const apiKeyVerify = 'test-verify-key';
+const revocationSigner = Wallet.createRandom();
+
+type EnvSnapshot = Record<string, string | undefined>;
+
+function snapshotEnv(keys: string[]): EnvSnapshot {
+  return Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+}
+
+function restoreEnv(snapshot: EnvSnapshot) {
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (value === undefined) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = value;
+  }
+}
+
+describe.sequential('Security hardening: auth, scopes, and per-key throttling', () => {
+  let app: FastifyInstance;
+  let envSnapshot: EnvSnapshot;
+
+  beforeAll(async () => {
+    const keysToSnapshot = [
+      'API_KEYS',
+      'API_KEY_SCOPES',
+      'REVOCATION_ISSUERS',
+      'RATE_LIMIT_API_KEY_MAX',
+      'RATE_LIMIT_GLOBAL_MAX',
+      'RATE_LIMIT_WINDOW',
+      'CORS_ALLOWLIST'
+    ];
+    envSnapshot = snapshotEnv(keysToSnapshot);
+
+    process.env.API_KEYS = `${apiKeyRead},${apiKeyRate},${apiKeyVerify}`;
+    process.env.API_KEY_SCOPES = [
+      `${apiKeyRead}=read`,
+      `${apiKeyRate}=read`,
+      `${apiKeyVerify}=verify|read|anchor|revoke`
+    ].join(';');
+    process.env.REVOCATION_ISSUERS = `issuer-a=${revocationSigner.address}`;
+    process.env.RATE_LIMIT_API_KEY_MAX = '3';
+    process.env.RATE_LIMIT_GLOBAL_MAX = '200';
+    process.env.RATE_LIMIT_WINDOW = '1 minute';
+    process.env.CORS_ALLOWLIST = 'https://portal.trustsignal.io';
+
+    app = await buildServer();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    restoreEnv(envSnapshot);
+  });
+
+  it('rejects missing or invalid API keys on protected routes', async () => {
+    const missing = await app.inject({
+      method: 'GET',
+      url: '/api/v1/receipts'
+    });
+
+    const invalid = await app.inject({
+      method: 'GET',
+      url: '/api/v1/receipts',
+      headers: { 'x-api-key': 'invalid-key' }
+    });
+
+    expect(missing.statusCode).toBe(401);
+    expect(invalid.statusCode).toBe(403);
+  });
+
+  it('enforces scope restrictions', async () => {
+    const forbidden = await app.inject({
+      method: 'POST',
+      url: '/api/v1/verify',
+      headers: { 'x-api-key': apiKeyRead },
+      payload: {}
+    });
+
+    expect(forbidden.statusCode).toBe(403);
+    expect(forbidden.json().error).toContain('missing scope');
+  });
+
+  it('enforces per-api-key rate limiting', async () => {
+    const first = await app.inject({
+      method: 'GET',
+      url: '/api/v1/receipts',
+      headers: { 'x-api-key': apiKeyRate }
+    });
+    const second = await app.inject({
+      method: 'GET',
+      url: '/api/v1/receipts',
+      headers: { 'x-api-key': apiKeyRate }
+    });
+    const third = await app.inject({
+      method: 'GET',
+      url: '/api/v1/receipts',
+      headers: { 'x-api-key': apiKeyRate }
+    });
+    const fourth = await app.inject({
+      method: 'GET',
+      url: '/api/v1/receipts',
+      headers: { 'x-api-key': apiKeyRate }
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(third.statusCode).toBe(200);
+    expect(fourth.statusCode).toBe(429);
+  });
+
+  it('applies CORS allowlist from environment', async () => {
+    const allowed = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/v1/health',
+      headers: {
+        origin: 'https://portal.trustsignal.io',
+        'access-control-request-method': 'GET'
+      }
+    });
+
+    const blocked = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/v1/health',
+      headers: {
+        origin: 'https://evil.example',
+        'access-control-request-method': 'GET'
+      }
+    });
+
+    expect(allowed.headers['access-control-allow-origin']).toBe('https://portal.trustsignal.io');
+    expect(blocked.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('requires issuer signature headers for revoke and verifies signature', async () => {
+    const syntheticRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/synthetic',
+      headers: { 'x-api-key': apiKeyVerify }
+    });
+    const bundle = syntheticRes.json();
+
+    const verifyRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/verify',
+      headers: { 'x-api-key': apiKeyVerify },
+      payload: bundle
+    });
+
+    expect(verifyRes.statusCode).toBe(200);
+    const receiptId = verifyRes.json().receiptId as string;
+
+    const missingHeaders = await app.inject({
+      method: 'POST',
+      url: `/api/v1/receipt/${receiptId}/revoke`,
+      headers: { 'x-api-key': apiKeyVerify }
+    });
+    expect(missingHeaders.statusCode).toBe(401);
+
+    const timestamp = Date.now().toString();
+    const validMessage = `revoke:${receiptId}:${timestamp}`;
+    const validSignature = await revocationSigner.signMessage(validMessage);
+
+    const badSignature = await app.inject({
+      method: 'POST',
+      url: `/api/v1/receipt/${receiptId}/revoke`,
+      headers: {
+        'x-api-key': apiKeyVerify,
+        'x-issuer-id': 'issuer-a',
+        'x-signature-timestamp': timestamp,
+        'x-issuer-signature': `${validSignature}00`
+      }
+    });
+    expect(badSignature.statusCode).toBe(401);
+
+    const valid = await app.inject({
+      method: 'POST',
+      url: `/api/v1/receipt/${receiptId}/revoke`,
+      headers: {
+        'x-api-key': apiKeyVerify,
+        'x-issuer-id': 'issuer-a',
+        'x-signature-timestamp': timestamp,
+        'x-issuer-signature': validSignature
+      }
+    });
+
+    expect(valid.statusCode).toBe(200);
+    expect(valid.json().status).toBe('REVOKED');
+    expect(valid.json().issuerId).toBe('issuer-a');
+  });
+});
+
+describe.sequential('Security hardening: global rate limiting', () => {
+  let app: FastifyInstance;
+  let envSnapshot: EnvSnapshot;
+
+  beforeAll(async () => {
+    const keysToSnapshot = ['RATE_LIMIT_GLOBAL_MAX', 'RATE_LIMIT_API_KEY_MAX', 'RATE_LIMIT_WINDOW', 'API_KEYS'];
+    envSnapshot = snapshotEnv(keysToSnapshot);
+
+    process.env.RATE_LIMIT_GLOBAL_MAX = '2';
+    process.env.RATE_LIMIT_API_KEY_MAX = '50';
+    process.env.RATE_LIMIT_WINDOW = '1 minute';
+    process.env.API_KEYS = apiKeyRead;
+
+    app = await buildServer();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    restoreEnv(envSnapshot);
+  });
+
+  it('limits all traffic globally by IP', async () => {
+    const first = await app.inject({ method: 'GET', url: '/api/v1/health' });
+    const second = await app.inject({ method: 'GET', url: '/api/v1/health' });
+    const third = await app.inject({ method: 'GET', url: '/api/v1/health' });
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(third.statusCode).toBe(429);
+  });
+});

@@ -1,10 +1,8 @@
 import { readFile } from 'fs/promises';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import { TrustRegistry, verifyRegistrySignature } from '@deed-shield/core';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const registryDir = path.resolve(__dirname, '../../../packages/core/registry');
 
 export async function loadRegistry(): Promise<TrustRegistry> {

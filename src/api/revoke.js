@@ -1,19 +1,6 @@
-const { execFileSync } = require('child_process');
+const { getDb } = require('../lib/db');
 
-function dbPath() {
-  return process.env.DB_PATH || './attestations.sqlite';
-}
-
-function sqlStringLiteral(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-function sqliteExec({ sql }) {
-  execFileSync('sqlite3', ['-noheader', '-batch', dbPath(), sql], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-}
+const { db } = getDb();
 
 function readJson(req) {
   return new Promise((resolve, reject) => {
@@ -48,9 +35,9 @@ async function handleRevoke(req, res) {
     }
 
     const revokedAt = new Date().toISOString();
-    sqliteExec({
-      sql: `INSERT OR REPLACE INTO revocations(jti, revoked_at) VALUES (${sqlStringLiteral(jti)}, ${sqlStringLiteral(revokedAt)});`,
-    });
+    db
+      .prepare('INSERT OR REPLACE INTO revocations(jti, revoked_at) VALUES (?, ?)')
+      .run(jti, revokedAt);
 
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ revoked: true }));

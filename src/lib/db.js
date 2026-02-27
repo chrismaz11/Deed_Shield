@@ -11,7 +11,13 @@ function ensureDir(filePath) {
   }
 }
 
+let cachedConnection = null;
+
 function getDb() {
+  if (cachedConnection) {
+    return cachedConnection;
+  }
+
   loadEnvLocal();
   const dbPath = process.env.ATTESTATION_DB_PATH || getDbPath();
   ensureDir(dbPath);
@@ -21,7 +27,8 @@ function getDb() {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   db.exec(schema);
 
-  return { db, dbPath };
+  cachedConnection = { db, dbPath };
+  return cachedConnection;
 }
 
 module.exports = {

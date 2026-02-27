@@ -19,6 +19,16 @@ npm -w apps/web run dev
 
 API defaults to `http://localhost:3001`, web runs on `http://localhost:3000`.
 
+## API Security Defaults
+
+- All `/api/v1/*` endpoints except `/api/v1/health` require `x-api-key`.
+- Configure API keys with `API_KEYS` and optional `API_KEY_SCOPES`.
+- CORS is deny-by-default in production unless `CORS_ALLOWLIST` is set.
+- Revocation requires issuer signature headers:
+  - `x-issuer-id`
+  - `x-signature-timestamp`
+  - `x-issuer-signature` (signature over `revoke:<receiptId>:<timestamp>`)
+
 ## Local Demo
 
 Runs 50 synthetic verifications, anchors 5 receipts, and verifies receipt integrity.
@@ -47,16 +57,19 @@ curl -s http://localhost:3001/api/v1/health
 ```bash
 curl -s http://localhost:3001/api/v1/synthetic | \
   curl -s -X POST http://localhost:3001/api/v1/verify \
+  -H 'x-api-key: dev-local-key' \
   -H 'content-type: application/json' \
   -d @-
 ```
 
 ```bash
-curl -s http://localhost:3001/api/v1/receipt/<receiptId>
+curl -s http://localhost:3001/api/v1/receipt/<receiptId> \
+  -H 'x-api-key: dev-local-key'
 ```
 
 ```bash
-curl -s -X POST http://localhost:3001/api/v1/anchor/<receiptId>
+curl -s -X POST http://localhost:3001/api/v1/anchor/<receiptId> \
+  -H 'x-api-key: dev-local-key'
 ```
 
 OpenAPI spec: `apps/api/openapi.json`.
@@ -102,5 +115,16 @@ Designed for multi-chain anchoring.
 
 ## Documentation
 
-Full user documentation is available in the [User Manual](./USER_MANUAL.md).
+Documentation is organized under:
+- [Documentation Index](./docs/README.md)
+- [Project Plan](./PROJECT_PLAN.md)
+- [Execution Tasks](./TASKS.md)
+- [User Manual](./USER_MANUAL.md)
 
+## Security Hygiene Check
+
+Run repository guardrails before committing:
+
+```bash
+./scripts/check-repo-hygiene.sh
+```
